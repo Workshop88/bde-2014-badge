@@ -24,7 +24,6 @@ RH_ASK driver(4800, 2, 3);
 RHDatagram *radio;
 
 typedef struct radio_msg_t_stct {
-  uint32_t time;
   uint16_t ir_min;
   uint16_t ir_max;
   uint16_t uv_min;
@@ -32,6 +31,7 @@ typedef struct radio_msg_t_stct {
   uint16_t vis_min;
   uint16_t vis_max;
   char badges[16];
+  uint32_t time;
   uint8_t badge_id;
 } radio_msg_t;
 radio_msg_t msg;

@@ -8,7 +8,6 @@
 #include <RHDatagram.h>
 #include <SPI.h> // Not actualy used but needed to compile
 typedef struct radio_msg_t_stct {
-  uint32_t time;
   uint16_t ir_min;
   uint16_t ir_max;
   uint16_t uv_min;
@@ -16,6 +15,7 @@ typedef struct radio_msg_t_stct {
   uint16_t vis_min;
   uint16_t vis_max;
   char badges[16];
+  uint32_t time;
   uint8_t badge_id;
 } radio_msg_t;
 RH_ASK driver(4800, 2, 3);
@@ -52,18 +52,29 @@ void loop()
           Serial.print(" expected ");
           Serial.println(sizeof(radio_msg_t));
         }
-        radio_msg_t *msg = (radio_msg_t *)buf;
+        radio_msg_t *msg = (radio_msg_t *)&buf[0];
         i = msg->badge_id;
-        snprintf(outstr, 100, "Src: %hhx Time: %u IR %hd/%hd UV %hd/%hd VIS %hd/%hd Badges %016xll%016xll\n", 
-                  msg->badge_id, 
-                  msg->time,
-                  msg->ir_min, msg->ir_max, 
-                  msg->uv_min, msg->uv_max, 
-                  msg->vis_min, msg->vis_max,
-                  *((uint64_t*)(msg->badges)),
-                  *((uint64_t*)(&msg->badges[8])));
-        
-        Serial.println(outstr);
-        driver.printBuffer("Got:", buf, buflen);
+        Serial.print(msg->badge_id);
+        Serial.print(",");
+        Serial.print(msg->time);
+        Serial.print(",");
+        Serial.print(msg->ir_min);
+        Serial.print(",");
+        Serial.print(msg->ir_max);
+        Serial.print(",");
+        Serial.print(msg->uv_min);
+        Serial.print(",");
+        Serial.print(msg->uv_max);
+        Serial.print(",");
+        Serial.print(msg->vis_min);
+        Serial.print(",");
+        Serial.print(msg->vis_max);
+        Serial.print(",");
+        for(i=0;i<16;i++)
+        {
+          Serial.print(msg->badges[i]&0xF0>>4, HEX);
+          Serial.print(msg->badges[i]&0xF, HEX);
+        }
+        Serial.println("");
     }
 }
