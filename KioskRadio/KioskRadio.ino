@@ -14,9 +14,10 @@ typedef struct radio_msg_t_stct {
   uint16_t uv_max;
   uint16_t vis_min;
   uint16_t vis_max;
-  char badges[16];
+  char badges[32];
   uint32_t time;
   uint8_t badge_id;
+  uint8_t infector;
 } radio_msg_t;
 RH_ASK driver(4800, 2, 3);
 RHDatagram *radio;
@@ -30,13 +31,13 @@ void setup()
 
 void loop()
 {
-    uint8_t buf[40];
+    uint8_t buf[50];
     uint8_t buflen = sizeof(buf);
     uint8_t src_addr = 0;
     uint8_t dst_addr = 0;
     uint8_t id = 0;
     uint8_t flags = 0;
-    memset(buf, 0, 40);
+    memset(buf, 0, 50);
     
 
     if (radio->recvfrom(buf, &buflen, &src_addr, &dst_addr, &id, &flags)) // Non-blocking
@@ -70,7 +71,9 @@ void loop()
         Serial.print(",");
         Serial.print(msg->vis_max);
         Serial.print(",");
-        for(i=0;i<16;i++)
+        Serial.print(msg->infector);
+        Serial.print(",");
+        for(i=0;i<32;i++)
         {
           Serial.print(msg->badges[i]&0xF0>>4, HEX);
           Serial.print(msg->badges[i]&0xF, HEX);

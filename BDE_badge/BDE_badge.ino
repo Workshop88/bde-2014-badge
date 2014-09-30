@@ -27,9 +27,10 @@ typedef struct radio_msg_t_stct {
   uint16_t uv_max;
   uint16_t vis_min;
   uint16_t vis_max;
-  char badges[16];
+  char badges[32];
   uint32_t time;
   uint8_t badge_id;
+  uint8_t infector;
 } radio_msg_t;
 radio_msg_t msg;
 
@@ -43,13 +44,13 @@ typedef struct file_rec_t_stct {
 } file_rec_t;
 file_rec_t record;
 
-uint8_t buff[34];
-uint8_t bufflen = 34;
+uint8_t buff[50];
+uint8_t bufflen = 50;
 
 uint8_t src =0, dst=0, id=0, flags=0;
 File logfile;
 
-prog_char filenm_format[] PROGMEM = { "data%02d.csv" };
+const prog_char filenm_format[] PROGMEM = { "data%02d.csv" };
 
 void setup()
 {
@@ -63,6 +64,7 @@ void setup()
   msg.uv_max=0;
   msg.vis_min=0xFFFF;
   msg.vis_max=0;
+  msg.infector = 0;
   Serial.begin(9600);
   Wire.begin();
   rtc.begin();
@@ -70,6 +72,9 @@ void setup()
   /* Needs to be set to OUTPUT for SD card to work */
   pinMode(SS, OUTPUT);
   pinMode(sd_cs, OUTPUT);
+ 
+  Serial.print("I am badge ");
+  Serial.println(msg.badge_id);
   
   if(!SD.begin(sd_cs))
   {
@@ -104,7 +109,7 @@ void setup()
     load_complete = 0;
     Serial.println(F("Error loading sensor."));
   }
-  radio = new RHDatagram(driver, 0x1);
+  radio = new RHDatagram(driver, msg.badge_id);
   if(!radio->init())
   {
      load_complete = 0; 
@@ -129,39 +134,59 @@ void setup()
 
 void loop()
 {
+  int writeFile = 0;
+  int lastSense = 0;
+
+  if(radio->waitAvailableTimeout(1000) && (radio->recvfrom(buff, &bufflen, &src, &dst, &id, &flags)))
+  {
+    writeFile = 1;
+    Serial.println(F("Got data on radio."));
+    /* We have data. */
+    radio_msg_t *in_msg = (radio_msg_t *)buff;
+    /* Update our bitmask with the badge we detected. */
+    if(in_msg->badge_id == 200) {
+      /* time adjust */
+      rtc.adjust(DateTime(in_msg->time));
+    }
+    msg.badges[(in_msg->badge_id / 8)] |= 0x1 << (in_msg->badge_id % 8);
+    if(in_msg->badge_id & 0xF0)
+    {
+      /* I'm now infected. */
+      msg.badge_id |= 0xF0;
+      msg.infector = in_msg->badge_id;
+    }
+    record.badge_id = in_msg->badge_id;
+  }
+
   DateTime time_now = rtc.now();
 
-  
-  record.ir_val  = sensor.readIR();
-  record.vis_val = sensor.readVisible();
-  record.uv_val  = sensor.readUV();
-
-  UPDATE_MINMAX(record.vis_val, msg.vis_min, msg.vis_max);
-  UPDATE_MINMAX(record.uv_val, msg.uv_min, msg.uv_max);
-  UPDATE_MINMAX(record.ir_val, msg.ir_min, msg.ir_max);
-  
   msg.time = time_now.unixtime();
+
+  if(writeFile || ((msg.time % 10 == 0) && (msg.time!=lastSense))) {
+    writeFile = 1;
+    lastSense = msg.time;
+    UPDATE_MINMAX(record.vis_val, msg.vis_min, msg.vis_max);
+    UPDATE_MINMAX(record.uv_val, msg.uv_min, msg.uv_max);
+    UPDATE_MINMAX(record.ir_val, msg.ir_min, msg.ir_max);
+  }
+
   Serial.print("Time is ");
   Serial.println(msg.time);
   record.time = msg.time;
   record.badge_id = 0;
   record.padding = 0;
   
-  radio->sendto((uint8_t *)&msg, sizeof(msg), RH_BROADCAST_ADDRESS);
-  radio->waitPacketSent();
-  
-  if(radio->recvfrom(buff, &bufflen, &src, &dst, &id, &flags))
-  {
-    Serial.println(F("Got data on radio."));
-    /* We have data. */
-    radio_msg_t *in_msg = (radio_msg_t *)buff;
-    /* Update our bitmask with the badge we detected. */
-    msg.badges[(in_msg->badge_id / 8)] |= 0x1 << (in_msg->badge_id % 8);
-    record.badge_id = in_msg->badge_id;
+  if((msg.time % 33) == (msg.badge_id % 33)) {
+    for(int i =0;i<3;i++) {
+      radio->sendto((uint8_t *)&msg, sizeof(msg), RH_BROADCAST_ADDRESS);
+      radio->waitPacketSent();
+      delay(random(100, 300));
+    }
   }
   
+  
   /* TODO: Write out record to file. */
-  if(log_available) {
+  if(log_available && writeFile) {
     logfile.print(record.time);
     logfile.print(",");
     logfile.print(record.ir_val);
@@ -181,7 +206,6 @@ void loop()
     logfile.flush();
     Serial.println(F("Flushed."));
   }
-  delay(1000);
  
 }
 
