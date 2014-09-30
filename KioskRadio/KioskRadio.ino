@@ -14,12 +14,12 @@ typedef struct radio_msg_t_stct {
   uint16_t uv_max;
   uint16_t vis_min;
   uint16_t vis_max;
-  char badges[32];
+//  char badges[32];
   uint32_t time;
   uint8_t badge_id;
   uint8_t infector;
 } radio_msg_t;
-RH_ASK driver(4800, 2, 3);
+RH_ASK driver(2400, 2, 3);
 RHDatagram *radio;
 
 void setup()
@@ -43,7 +43,7 @@ void loop()
     if (radio->recvfrom(buf, &buflen, &src_addr, &dst_addr, &id, &flags)) // Non-blocking
     {
 	int i;
-        char outstr[100];
+        //char outstr[100];
 	// Message with a good checksum received, dump it.
 	//driver.printBuffer("Got:", buf, buflen);
         if(buflen != sizeof(radio_msg_t))
@@ -72,12 +72,12 @@ void loop()
         Serial.print(msg->vis_max);
         Serial.print(",");
         Serial.print(msg->infector);
-        Serial.print(",");
+        /*Serial.print(",");
         for(i=0;i<32;i++)
         {
           Serial.print(msg->badges[i]&0xF0>>4, HEX);
           Serial.print(msg->badges[i]&0xF, HEX);
-        }
+        }*/
         Serial.println("");
     }
 }

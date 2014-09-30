@@ -8,6 +8,8 @@
 #include <RHDatagram.h>
 #include <Adafruit_SI1145.h>
 
+#define DEBUG 1
+
 const int sd_cs = 10;
 
 RTC_DS1307 rtc;
@@ -17,7 +19,7 @@ Adafruit_SI1145 sensor = Adafruit_SI1145();
 int load_complete = 1; // Assume success
 int log_available = 0;
 
-RH_ASK driver(4800, 2, 3);
+RH_ASK driver(2400, 2, 3);
 RHDatagram *radio;
 
 typedef struct radio_msg_t_stct {
@@ -27,7 +29,7 @@ typedef struct radio_msg_t_stct {
   uint16_t uv_max;
   uint16_t vis_min;
   uint16_t vis_max;
-  char badges[32];
+  //char badges[32];
   uint32_t time;
   uint8_t badge_id;
   uint8_t infector;
@@ -50,14 +52,22 @@ uint8_t bufflen = 50;
 uint8_t src =0, dst=0, id=0, flags=0;
 File logfile;
 
+int next_send = 0;
 const prog_char filenm_format[] PROGMEM = { "data%02d.csv" };
+char * id_file = "id.txt";
+char fname[12];
+
+int get_next_send()
+{
+	return millis() + random(20000,30000);
+}
 
 void setup()
 {
+  next_send = get_next_send();
   memset(&msg, 0, sizeof(radio_msg_t));
-  msg.badge_id = EEPROM.read(0);
-  if(msg.badge_id == 0xFF)
-    msg.badge_id = 1;
+  memset(buff, 0, 50);
+  msg.badge_id = 0;
   msg.ir_min=0xFFFF;
   msg.ir_max=0;
   msg.uv_min=0xFFFF;
@@ -73,26 +83,50 @@ void setup()
   pinMode(SS, OUTPUT);
   pinMode(sd_cs, OUTPUT);
  
-  Serial.print("I am badge ");
-  Serial.println(msg.badge_id);
+
   
   if(!SD.begin(sd_cs))
   {
     load_complete = 0;
+#if DEBUG
     Serial.println(F("Error reading SD card"));
+#endif
   } else {
+#if DEBUG
+    Serial.println(F("Reading id.txt."));
+#endif
+    if(SD.exists(id_file)) {
+      int i=0;
+      logfile = SD.open(id_file, FILE_READ);
+      while((i<50) && ((buff[i] = logfile.read()) != -1))
+      {
+        i++;
+      }
+      msg.badge_id = atoi((char *)buff);
+      EEPROM.write(0, msg.badge_id);
+      logfile.close();
+    }
+
+#if DEBUG
     Serial.println(F("Opening log file."));
-    char fname[12];
+#endif
+
     int i=0;
     do{
        snprintf_P(fname, 12, filenm_format, i);
+#if DEBUG
        Serial.print(F("Trying file "));
        Serial.println(fname);
+#endif
        if(!SD.exists(fname)) {
+#if DEBUG
          Serial.print(F("I see no ")); Serial.print(fname); Serial.println(F(" here. Creating."));
+#endif
          logfile = SD.open(fname, FILE_WRITE);
+#if DEBUG
          Serial.print(F("Created new log file '"));
          Serial.print(fname); Serial.println("'");
+#endif
          break;
        }
        i++;
@@ -103,20 +137,42 @@ void setup()
       log_available=1;
     }
   }
+
+  if(msg.badge_id == 0)
+  {
+    /* Still no badge id, so no id file. */
+    msg.badge_id = EEPROM.read(0);
+    if(msg.badge_id == 0xFF)
+    {
+      /* Nothing in EEPROM, so we're a new badge with no file on the SD card... */
+      msg.badge_id = random(101, 127);
+    }
+  }
+
+#if DEBUG
+  Serial.print("I am badge ");
+  Serial.println(msg.badge_id);
+#endif
+
   
   if(!sensor.begin())
   {
     load_complete = 0;
+#if DEBUG
     Serial.println(F("Error loading sensor."));
+#endif
   }
   radio = new RHDatagram(driver, msg.badge_id);
   if(!radio->init())
   {
      load_complete = 0; 
+#if DEBUG
      Serial.println(F("Error initializing radio."));
+#endif
   }
-
+#if DEBUG
   Serial.println(F("Initialization succeeded!"));
+#endif
 
 }
 
@@ -137,10 +193,12 @@ void loop()
   int writeFile = 0;
   int lastSense = 0;
 
-  if(radio->waitAvailableTimeout(1000) && (radio->recvfrom(buff, &bufflen, &src, &dst, &id, &flags)))
+  if(radio->recvfrom(buff, &bufflen, &src, &dst, &id, &flags))
   {
     writeFile = 1;
+#if DEBUG
     Serial.println(F("Got data on radio."));
+#endif
     /* We have data. */
     radio_msg_t *in_msg = (radio_msg_t *)buff;
     /* Update our bitmask with the badge we detected. */
@@ -148,7 +206,7 @@ void loop()
       /* time adjust */
       rtc.adjust(DateTime(in_msg->time));
     }
-    msg.badges[(in_msg->badge_id / 8)] |= 0x1 << (in_msg->badge_id % 8);
+    //msg.badges[(in_msg->badge_id / 8)] |= 0x1 << (in_msg->badge_id % 8);
     if(in_msg->badge_id & 0xF0)
     {
       /* I'm now infected. */
@@ -165,23 +223,29 @@ void loop()
   if(writeFile || ((msg.time % 10 == 0) && (msg.time!=lastSense))) {
     writeFile = 1;
     lastSense = msg.time;
+    record.ir_val  = sensor.readIR();
+    record.vis_val = sensor.readVisible();
+    record.uv_val  = sensor.readUV();
     UPDATE_MINMAX(record.vis_val, msg.vis_min, msg.vis_max);
     UPDATE_MINMAX(record.uv_val, msg.uv_min, msg.uv_max);
     UPDATE_MINMAX(record.ir_val, msg.ir_min, msg.ir_max);
   }
 
+#if DEBUG
   Serial.print("Time is ");
   Serial.println(msg.time);
+#endif
   record.time = msg.time;
   record.badge_id = 0;
   record.padding = 0;
   
-  if((msg.time % 33) == (msg.badge_id % 33)) {
+  if(millis() > next_send) {
     for(int i =0;i<3;i++) {
       radio->sendto((uint8_t *)&msg, sizeof(msg), RH_BROADCAST_ADDRESS);
       radio->waitPacketSent();
-      delay(random(100, 300));
+      delay(random(500, 800));
     }
+    next_send = get_next_send();
   }
   
   
@@ -202,9 +266,13 @@ void loop()
       logfile.print(record.badge_id);
     }
     logfile.println();
+#if DEBUG
     Serial.println(F("Flushing."));
+#endif
     logfile.flush();
+#if DEBUG
     Serial.println(F("Flushed."));
+#endif
   }
  
 }
