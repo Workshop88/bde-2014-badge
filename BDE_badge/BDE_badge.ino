@@ -59,7 +59,7 @@ char fname[12];
 
 #define get_next_send(out) do { \
   long mil = millis(); \
-  long val = random(10000) + 20000; \
+  long val = 3000; \
   Serial.print(F("Random number in get_next_send is ")); \
   Serial.println(val); \
   Serial.println(mil); \
