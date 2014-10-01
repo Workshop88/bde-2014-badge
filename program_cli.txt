@@ -1,0 +1,1 @@
+avrdude  -patmega328p -carduino -P\\.\COM20 -b57600 -D -Uflash:w:BDE_badge.cpp.hex:i
