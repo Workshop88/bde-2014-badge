@@ -46,27 +46,36 @@ typedef struct file_rec_t_stct {
 } file_rec_t;
 file_rec_t record;
 
-uint8_t buff[50];
-uint8_t bufflen = 50;
+uint8_t buff[20];
+uint8_t bufflen = 20;
 
-uint8_t src =0, dst=0, id=0, flags=0;
+//uint8_t src =0, dst=0, id=0, flags=0;
 File logfile;
 
-int next_send = 0;
+uint32_t next_send = 0, next_sense = 0;
 const prog_char filenm_format[] PROGMEM = { "data%02d.csv" };
 char * id_file = "id.txt";
 char fname[12];
 
-int get_next_send()
-{
-	return millis() + random(20000,30000);
-}
+#define get_next_send(out) do { \
+  long mil = millis(); \
+  long val = random(10000) + 20000; \
+  Serial.print(F("Random number in get_next_send is ")); \
+  Serial.println(val); \
+  Serial.println(mil); \
+  out = mil + val; \
+} while(0) 
+
+#define get_next_sense(out) do { \
+        out = millis() + random(10000,15000); \
+} while(0)
 
 void setup()
 {
-  next_send = get_next_send();
+  get_next_send(next_send);
+  get_next_sense(next_sense);
   memset(&msg, 0, sizeof(radio_msg_t));
-  memset(buff, 0, 50);
+  memset(buff, 0, bufflen);
   msg.badge_id = 0;
   msg.ir_min=0xFFFF;
   msg.ir_max=0;
@@ -98,7 +107,7 @@ void setup()
     if(SD.exists(id_file)) {
       int i=0;
       logfile = SD.open(id_file, FILE_READ);
-      while((i<50) && ((buff[i] = logfile.read()) != -1))
+      while((i<bufflen) && ((buff[i] = logfile.read()) != -1))
       {
         i++;
       }
@@ -125,7 +134,7 @@ void setup()
          logfile = SD.open(fname, FILE_WRITE);
 #if DEBUG
          Serial.print(F("Created new log file '"));
-         Serial.print(fname); Serial.println("'");
+         Serial.print(fname); Serial.println(F("'"));
 #endif
          break;
        }
@@ -150,7 +159,7 @@ void setup()
   }
 
 #if DEBUG
-  Serial.print("I am badge ");
+  Serial.print(F("I am badge "));
   Serial.println(msg.badge_id);
 #endif
 
@@ -191,9 +200,9 @@ void setup()
 void loop()
 {
   int writeFile = 0;
-  int lastSense = 0;
 
-  if(radio->recvfrom(buff, &bufflen, &src, &dst, &id, &flags))
+  bufflen = sizeof(buff);
+  if(radio->recvfrom(buff, &bufflen, NULL, NULL, NULL, NULL))
   {
     writeFile = 1;
 #if DEBUG
@@ -202,15 +211,15 @@ void loop()
     /* We have data. */
     radio_msg_t *in_msg = (radio_msg_t *)buff;
     /* Update our bitmask with the badge we detected. */
-    if(in_msg->badge_id == 200) {
+    if(in_msg->badge_id == 254) {
       /* time adjust */
+      Serial.print("Adjust to ");
+      Serial.println(in_msg->time);
       rtc.adjust(DateTime(in_msg->time));
-    }
-    //msg.badges[(in_msg->badge_id / 8)] |= 0x1 << (in_msg->badge_id % 8);
-    if(in_msg->badge_id & 0xF0)
+    } else if(in_msg->badge_id & 0x80)
     {
       /* I'm now infected. */
-      msg.badge_id |= 0xF0;
+      msg.badge_id |= 0x80;
       msg.infector = in_msg->badge_id;
     }
     record.badge_id = in_msg->badge_id;
@@ -220,32 +229,37 @@ void loop()
 
   msg.time = time_now.unixtime();
 
-  if(writeFile || ((msg.time % 10 == 0) && (msg.time!=lastSense))) {
+  if(writeFile || (millis() > next_sense)) {
     writeFile = 1;
-    lastSense = msg.time;
     record.ir_val  = sensor.readIR();
     record.vis_val = sensor.readVisible();
     record.uv_val  = sensor.readUV();
     UPDATE_MINMAX(record.vis_val, msg.vis_min, msg.vis_max);
     UPDATE_MINMAX(record.uv_val, msg.uv_min, msg.uv_max);
     UPDATE_MINMAX(record.ir_val, msg.ir_min, msg.ir_max);
+    get_next_sense(next_sense);
   }
 
-#if DEBUG
-  Serial.print("Time is ");
-  Serial.println(msg.time);
-#endif
+
   record.time = msg.time;
   record.badge_id = 0;
   record.padding = 0;
   
   if(millis() > next_send) {
+    Serial.print(F("About to send. "));
+    Serial.print(millis());
+    Serial.print(F(" "));
+    Serial.println(next_send);
     for(int i =0;i<3;i++) {
       radio->sendto((uint8_t *)&msg, sizeof(msg), RH_BROADCAST_ADDRESS);
       radio->waitPacketSent();
       delay(random(500, 800));
     }
-    next_send = get_next_send();
+    get_next_send(next_send);
+    Serial.println(F("Done sending."));
+    Serial.print(millis());
+    Serial.print(F(" "));
+    Serial.println(next_send);
   }
   
   
@@ -268,6 +282,8 @@ void loop()
     logfile.println();
 #if DEBUG
     Serial.println(F("Flushing."));
+   Serial.print(F("Time is "));
+   Serial.println(msg.time);
 #endif
     logfile.flush();
 #if DEBUG
